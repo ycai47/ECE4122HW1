@@ -21,7 +21,6 @@ void Transform1D(Complex* h, int w, Complex* H)
   // Implement a simple 1-d DFT using the double summation equation
   // given in the assignment handout.  h is the time-domain input
   // data, w is the width (N), and H is the output array.
-  Complex W(cos(double(2*M_PI/w)),-sin(double(2*M_PI/w)));
   Complex W_nk;
   for (int n = 0; n < w; ++n)
   {
@@ -29,9 +28,37 @@ void Transform1D(Complex* h, int w, Complex* H)
     H[n].imag = 0;
     for (int k = 0; k < w; ++k)
     {
-      W_nk.real = pow(W.Mag().real, n*k) * cos(W.Angle().real*n*k);
-      W_nk.imag = - pow(W.Mag().real, n*k) * sin(W.Angle().real*n*k);
+      W_nk.real = cos(double(2*M_PI*n*k/w));
+      W_nk.imag = - sin(double(2*M_PI*n*k/w));
       H[n] = H[n] + W_nk*h[k];
+    }
+    if(fabs(H[n].real) < 1E-10) H[n].real = 0;
+    if(fabs(H[n].imag) < 1E-10) H[n].imag = 0;
+  }
+
+}
+
+void Test1D(InputImage * image)
+{
+  int width = image->GetWidth();
+  int height = image->GetHeight();
+  Complex * h = image->GetImageData();
+  Complex * H = new Complex[width * height];
+  for (int i = 0; i < height; ++i)
+  {
+    Transform1D(&h[i*width], width, &H[i*width]);
+  }
+  image->SaveImageData("result_1d.txt", H, width, height);
+  string fn("after1d.txt");
+  InputImage * data = new InputImage(fn.c_str());
+  Complex * result = data->GetImageData();
+  for (int i = 0; i < height*width; ++i)
+  {
+    if(fabs(H[i].real -result[i].real) < 0.01 && fabs(H[i].imag - result[i].imag) < 0.01) continue;
+    else
+    {
+      printf("value on row %d, col %d is not correct.\n", i/width, i%width);
+      break;
     }
   }
 }
@@ -41,10 +68,13 @@ void Transform2D(const char* inputFN)
   // 1) Use the InputImage object to read in the Tower.txt file and
   //    find the width/height of the input image.
     InputImage * image = new InputImage(inputFN); // Create the helper object for reading the image
+    Test1D(image);
+    /*
     int width = image->GetWidth();
     int height = image->GetHeight();
   // 2) Use MPI to find how many CPUs in total, and which one
   //    this process is
+    
     int rank, numtasks, rc;
     rc = MPI_Init(NULL, NULL);
     if (rc != MPI_SUCCESS)
@@ -176,7 +206,9 @@ void Transform2D(const char* inputFN)
                          0, MPI_COMM_WORLD, &request);
     }
       MPI_Finalize();
+      */
 }
+
 
 int main(int argc, char** argv)
 {
