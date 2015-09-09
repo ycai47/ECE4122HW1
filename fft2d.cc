@@ -99,11 +99,10 @@ void Transform2D(const char* inputFN)
   //    other processors for the next phase.
   // 6a) To send and receive rows, you might need a separate
   //     Complex array of the correct size.
-    
+
     int mess_length = row_per_proc*col_per_proc;
     Complex * mess_send = new Complex[mess_length];
     MPI_Request request;
-    MPI_Status status;
     for (int i = 0; i < numtasks; ++i)
     {
       if (i == rank) continue; //send message unless itself
@@ -113,7 +112,7 @@ void Transform2D(const char* inputFN)
         {
           memcpy(&mess_send[j*col_per_proc], &result_1d[j*width+i*col_per_proc], col_per_proc * sizeof(Complex));
         }
-        printf("Message ready to be sent\n");
+        //printf("Message ready to be sent\n");
         rc = MPI_Isend(mess_send, row_per_proc*col_per_proc * sizeof(Complex), MPI_BYTE, i,
                        0, MPI_COMM_WORLD, &request);
         if (rc != MPI_SUCCESS)
@@ -122,37 +121,41 @@ void Transform2D(const char* inputFN)
           MPI_Finalize();
           return;
         }
-        MPI_Wait(&request, &status);
       }
     }
-    /*
   // 7) Receive messages from other processes to collect your rows
     Complex * data_2d = new Complex[row_per_proc * width];
     for (int i = 0; i < numtasks; ++i)
     {
-      if (i == rank) continue;
+      if (i == rank)
+      {
+        for (int j = 0; j < row_per_proc; ++j) //copy over data from itself
+        {
+          memcpy(&data_2d[j*width+rank*col_per_proc], &result_1d[j*width+rank*col_per_proc], col_per_proc * sizeof(Complex));
+        }
+        continue;
+      }
       else
       {
         MPI_Status status;
         Complex * mess_recv = new Complex[row_per_proc * col_per_proc];//create buffer
-        rc = MPI_Recv(mess_recv, row_per_proc * col_per_proc, MPI_COMPLEX, MPI_ANY_SOURCE,
-                         0, MPI_COMM_WORLD, &request);
+        rc = MPI_Recv(mess_recv, row_per_proc*col_per_proc * sizeof(Complex), MPI_BYTE, MPI_ANY_SOURCE,
+                        0, MPI_COMM_WORLD, &status);
         if (rc != MPI_SUCCESS)
         {
           cout << "Rank " << rank << " recv failed, rc " << rc << endl;
           MPI_Finalize();
           return;
         }
+        int source = status.MPI_SOURCE;
         for (int j = 0; j < row_per_proc; ++j)
         {
-          for (int k = 0; k < col_per_proc; ++k)
-          {
-            data_2d[(start_row+j) * width + i*col_per_proc+k] = mess_recv[j * width + k];
-          }
+          memcpy(&data_2d[j*width+source*col_per_proc], &mess_recv[j*col_per_proc], col_per_proc * sizeof(Complex));
         }
         printf("rank %d reveive data from process %d\n", rank, i);
       }
     }
+    /*
   // 8) When all rows received, do the 1D transforms on the rows
     Complex * result = new Complex[row_per_proc * width];
     for (int i = 0; i < col_per_proc; ++i)
