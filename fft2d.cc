@@ -94,7 +94,7 @@ void Transform2D(const char* inputFN)
     {
       Transform1D(&data[(start_row+i)*width], width, &result_1d[i*width]);
     }
-    printf("1d transform for rank %d done\n", rank);
+    printf("first 1d transform for rank %d done\n", rank);
   // 6) Send the resultant transformed values to the appropriate
   //    other processors for the next phase.
   // 6a) To send and receive rows, you might need a separate
@@ -131,8 +131,7 @@ void Transform2D(const char* inputFN)
       {
         for (int j = 0; j < row_per_proc; ++j) //copy over data from itself
         {
-          memcpy(&data_2d[j*width+rank*col_per_proc], &result_1d[j*width+rank*col_per_proc], col_per_proc * sizeof(Complex));
-        }
+           memcpy(&data_2d[j*width+rank*col_per_proc], &result_1d[j*width+rank*col_per_proc], col_per_proc * sizeof(Complex));        }
         continue;
       }
       else
@@ -155,13 +154,14 @@ void Transform2D(const char* inputFN)
         printf("rank %d reveive data from process %d\n", rank, i);
       }
     }
-    /*
   // 8) When all rows received, do the 1D transforms on the rows
     Complex * result = new Complex[row_per_proc * width];
-    for (int i = 0; i < col_per_proc; ++i)
+    for (int i = 0; i < row_per_proc; ++i)
     {
-      Transform1D(&data_2d[(start_row+i)*width], width, &result[i*width]);
+      Transform1D(&data_2d[i*width], width, &result[i*width]);
+      printf("second 1d transform for rank %d done\n", rank);
     }
+    /*
   // 9) Send final answers to CPU 0 (unless you are CPU 0)
   //   9a) If you are CPU 0, collect all values from other processors
   //       and print out with SaveImageData().
