@@ -78,6 +78,7 @@ void Test1D(InputImage * image)
     }
   }
   delete [] H;
+  delete data;
   return;
 }
 
@@ -90,14 +91,15 @@ void Transform2D(const char* inputFN)
     int width = image->GetWidth();
     int height = image->GetHeight();
   // find how many CPUs in total, and which one this process is
-    int rank, nCPUs, rc;
+    int rank, nCPUs, rc, source;
     MPI_Status status;
     MPI_Request request;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &nCPUs); 
   // Obtain a pointer to the Complex 1d array of input data
     Complex * data = image->GetImageData();
-    const int row_per_proc = height / nCPUs;
+    int row_per_proc = height / nCPUs;
+    int col_per_proc = width / nCPUs;
     int start_row = rank * row_per_proc;
     Complex * result_1d = new Complex[row_per_proc * width];
     if (result_1d == NULL)
@@ -110,80 +112,125 @@ void Transform2D(const char* inputFN)
       Transform1D(&data[(start_row + i) * width], width, &result_1d[i * width]);
     }
     // printf("first 1d transform for rank %d done\n", rank);
-  // Send the resultant transformed values to CPU 0
-    rc = MPI_Isend(result_1d, row_per_proc * width * sizeof(Complex), MPI_BYTE, 0,
-              0, MPI_COMM_WORLD, &request);
-    if (rc != MPI_SUCCESS)
+  // Send the resultant transformed values to the appropriate other processors for the next phase.
+    //create block of data
+    int mess_length = row_per_proc * col_per_proc;
+    Complex * mess_send = new Complex[mess_length];
+    Complex * data_2d = new Complex[row_per_proc * width];
+    for (int i = 0; i < nCPUs; ++i)
     {
-      cout << "Rank " << rank << "first send to CPU 0 failed, rc " << rc << endl;
-      MPI_Finalize();
-      return;
-    }
-  //CPU 0 receives all results from first 1d transform and perform transpose and then send back to proper CPUs
-    if (rank == 0)
-    {
-      for (int i = 0; i < nCPUs; ++i)
+      //prepare messages for all CPUs
+      for (int j = 0; j < row_per_proc; ++j)
       {
-        rc = MPI_Recv(&data[i * row_per_proc * width], row_per_proc * width * sizeof(Complex), MPI_BYTE, i,
-                  0, MPI_COMM_WORLD, &status);
+        memcpy(&mess_send[j * col_per_proc], &result_1d[j * width + i * col_per_proc], col_per_proc * sizeof(Complex));
       }
-      Transpose(data, height, width);
-      for (int i = 0; i < nCPUs; ++i)
+      Transpose(mess_send, row_per_proc, col_per_proc);
+      //printf("Message ready to be sent\n");
+      if (i == rank)
       {
-        rc = MPI_Isend(&data[i * row_per_proc * width], row_per_proc * width * sizeof(Complex), MPI_BYTE, i,
+        for (int j = 0; j < row_per_proc; ++j)
+        {
+          //copy over in current rank
+          memcpy(&data_2d[j * width + rank * col_per_proc], &mess_send[j * col_per_proc], col_per_proc * sizeof(Complex));
+        }
+      }
+      else
+      {
+        rc = MPI_Isend(mess_send, row_per_proc * col_per_proc * sizeof(Complex), MPI_BYTE, i,
                   0, MPI_COMM_WORLD, &request);
-      }
-    }
-  // Receive rows from CPU 0
-    Complex * mess_recv = new Complex[row_per_proc * width];
-    rc = MPI_Recv(mess_recv, row_per_proc * width * sizeof(Complex), MPI_BYTE, 0,
-              0, MPI_COMM_WORLD, &status);
-    if (rc != MPI_SUCCESS)
-    {
-      cout << "Rank " << rank << " recv failed, rc " << rc << endl;
-      MPI_Finalize();
-      return;
-    }
-  // When all rows received, do the 1D transforms on the rows
-    Complex * result = new Complex[row_per_proc * width];
-    for (int i = 0; i < row_per_proc; ++i)
-    {
-      Transform1D(&mess_recv[i * width], width, &result[i * width]);
-      // printf("second 1d transform for rank %d done\n", rank);
-    }
-  // Send final answers to CPU 0
-    rc = MPI_Isend(result, row_per_proc * width * sizeof(Complex), MPI_BYTE, 0,
-              0, MPI_COMM_WORLD, &request);
-    if (rc != MPI_SUCCESS)
-    {
-      cout << "Rank " << rank << "final send to CPU 0 failed, rc " << rc << endl;
-      MPI_Finalize();
-      return;
-    }
-  // If CPU 0, collect all values from other processors and transpose back and print out with SaveImageData().
-    if(rank == 0)
-    {
-      Complex * result_2d = new Complex[width * height];
-      for (int i = 0; i < nCPUs; ++i)
-      {
-        rc = MPI_Recv(&result_2d[i * row_per_proc * width], row_per_proc * width * sizeof(Complex), MPI_BYTE, i,
-                  0, MPI_COMM_WORLD, &status);
         if (rc != MPI_SUCCESS)
         {
-          cout << "Rank " << i << " recv failed, rc " << rc << endl;
+          cout << "Rank " << rank << "to process" << i << " send failed, rc " << rc << endl;
           MPI_Finalize();
           return;
         }
       }
+    }
+  // Receive messages from other processes to collect your rows
+    for (int i = 0; i < nCPUs; ++i)
+    {
+      if (i != rank)
+      {
+        Complex * mess_recv = new Complex[row_per_proc * col_per_proc];//create buffer
+        rc = MPI_Recv(mess_recv, row_per_proc * col_per_proc * sizeof(Complex), MPI_BYTE, MPI_ANY_SOURCE,
+                  0, MPI_COMM_WORLD, &status);
+        if (rc != MPI_SUCCESS)
+        {
+          cout << "Rank " << rank << " recv failed, rc " << rc << endl;
+          MPI_Finalize();
+          return;
+        }
+        source = status.MPI_SOURCE;
+        for (int j = 0; j < row_per_proc; ++j)
+        {
+          memcpy(&data_2d[j * width + source * col_per_proc], &mess_recv[j * col_per_proc], col_per_proc * sizeof(Complex));
+        }
+        //delete [] mess_recv;
+        //printf("rank %d reveived data from process %d\n", rank, i);
+      }
+    }
+  // 8) When all rows received, do the 1D transforms on the rows
+    Complex * result = new Complex[row_per_proc * width];
+    for (int i = 0; i < row_per_proc; ++i)
+    {
+      Transform1D(&data_2d[i*width], width, &result[i*width]);
+      // printf("second 1d transform for rank %d done\n", rank);
+    }
+    // if (rank == 15)
+    // {
+    //   image->SaveImageData("Message.txt", result, width, row_per_proc);
+    // }
+  // If CPU 0, collect all values from other processors and print out with SaveImageData().
+    if (rank == 0)
+    {
+      Complex * result_2d = new Complex[width * height];
+      for (int i = 0; i < row_per_proc; ++i)//copy over values in CPU 0
+      {
+        memcpy(&result_2d[i * width], &result[i * width], width * sizeof(Complex));
+      }
+      for (int i = 1; i < nCPUs; ++i)
+      {
+        MPI_Status status;
+        Complex * rows = new Complex[row_per_proc * width];
+        rc = MPI_Recv(rows, row_per_proc * width * sizeof(Complex), MPI_BYTE, MPI_ANY_SOURCE,
+                  0, MPI_COMM_WORLD, &status);
+        if (rc != MPI_SUCCESS)
+        {
+          cout << "From rank " << rank << " recv failed, rc " << rc << endl;
+          MPI_Finalize();
+          return;
+        }
+        source = status.MPI_SOURCE;
+        //printf("Data received from %d\n", source);
+        for (int j = 0; j < row_per_proc; ++j)
+        {
+          memcpy(&result_2d[(source * row_per_proc + j) * width], &rows[j * width], width * sizeof(Complex));
+        }
+        //delete [] rows;
+      }
       Transpose(result_2d, height, width);
       string fn("MyAfter2d.txt");
       image->SaveImageData(fn.c_str(), result_2d, width, height);
-      delete [] result_2d;
+      //delete [] result_2d;
     }
-    //clean up
-    delete [] result_1d;
-    delete [] mess_recv;
-    delete [] result;
+  // Send final answers to CPU 0
+    else
+    {
+      rc = MPI_Isend(result, row_per_proc * width * sizeof(Complex), MPI_BYTE, 0,
+                0, MPI_COMM_WORLD, &request);
+      if (rc != MPI_SUCCESS)
+        {
+          cout << "From rank " << rank << " recv failed, rc " << rc << endl;
+          MPI_Finalize();
+          return;
+      }
+    }
+  //clean up
+    // delete image;
+    // delete [] result_1d;
+    // delete [] mess_send;
+    // delete [] result;
+    // delete [] data_2d;
     return;
 }
 
