@@ -176,7 +176,7 @@ void Transform2D(const char* inputFN)
         }
       }
       Transpose(result_2d, height, width);
-      string fn("Finished.txt");
+      string fn("MyAfter2d.txt");
       image->SaveImageData(fn.c_str(), result_2d, width, height);
       delete [] result_2d;
     }
